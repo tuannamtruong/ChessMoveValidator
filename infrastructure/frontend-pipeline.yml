@@ -190,7 +190,9 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: codestar-connections:UseConnection
+                Action:
+                  - codeconnections:UseConnection
+                  - codestar-connections:UseConnection
                 Resource: !Ref GitHubConnectionArn
               - Effect: Allow
                 Action:
