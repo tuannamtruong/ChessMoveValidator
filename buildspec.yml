@@ -1,0 +1,8 @@
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - test -f frontend/index.html
+      - aws s3 sync frontend/ "s3://${FRONTEND_BUCKET}/" --delete --only-show-errors
+      - aws cloudfront create-invalidation --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths '/*'
