@@ -2,20 +2,15 @@
 
 ## First deployment phase
 
-This repository contains a static Hello World frontend and the CloudFormation
-template that deploys it through CloudFront. The frontend accepts an email and
-uploads a selected file to a separate private S3 bucket using a short-lived
-signed URL. A CodePipeline watches a GitHub
-branch and invokes CodeBuild on each change. CodeBuild synchronizes
-`frontend/` to the private origin bucket and creates a CloudFront invalidation.
+A static web UI accepts an email address and chess move text file; the backend stores the pending submission, sends a confirmation link, processes confirmed files asynchronously, records status/results, and emails the outcome.
+
+A CodePipeline watches the `main` GitHub branch and invokes CodeBuild on each change. CodeBuild synchronizes `frontend/` to the private origin bucket and creates a CloudFront invalidation.
 
 Deploy this phase in the AWS Frankfurt Region: `eu-central-1`.
 
 ### Prerequisite
 
-Create and authorize an AWS CodeConnections connection to GitHub in
-`eu-central-1`. Copy `.env.example` to `.env`, then add the connection ARN and
-the repository settings. `.env` is deliberately excluded from Git.
+Create and authorize an AWS CodeConnections connection to GitHub in `eu-central-1`. Copy `.env.example` to `.env`, then add the connection ARN and the repository settings. `.env` is deliberately excluded from Git.
 
 ### Deploy
 
@@ -23,9 +18,7 @@ the repository settings. `.env` is deliberately excluded from Git.
 ./scripts/deploy-frontend.sh
 ```
 
-After the initial stack deployment, commit and push changes to the configured
-branch. The pipeline will redeploy `frontend/` automatically. Retrieve the
-website address with:
+After the initial stack deployment, commit and push changes to the configured branch. The pipeline will redeploy `frontend/` automatically. Retrieve the website address with:
 
 ```bash
 aws cloudformation describe-stacks \

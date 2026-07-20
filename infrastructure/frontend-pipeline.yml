@@ -55,12 +55,11 @@ Resources:
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders:
-              - content-type
-              - x-amz-meta-email
+              - '*'
             AllowedMethods:
               - PUT
             AllowedOrigins:
-              - https://*.cloudfront.net
+              - '*'
             MaxAge: 300
       LifecycleConfiguration:
         Rules:
