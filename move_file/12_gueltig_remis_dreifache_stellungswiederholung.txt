@@ -1,0 +1,8 @@
+g1 f3
+g8 f6
+f3 g1
+f6 g8
+g1 f3
+g8 f6
+f3 g1
+f6 g8
