@@ -28,6 +28,10 @@ Parameters:
     MinValue: 1
     MaxValue: 168
     Description: Number of hours an upload confirmation link remains valid.
+  ApiDeploymentVersion:
+    Type: String
+    Default: manual
+    Description: Bump/hash this to force a new API Gateway deployment.
 
 Resources:
   FrontendBucket:
@@ -533,6 +537,7 @@ Resources:
       - ConfirmApiMethod
     Properties:
       RestApiId: !Ref UploadApi
+      Description: !Sub 'Deployment ${ApiDeploymentVersion}'
 
   UploadApiStage:
     Type: AWS::ApiGateway::Stage
@@ -758,6 +763,9 @@ Outputs:
   FrontendUrl:
     Description: Public CloudFront URL for the frontend.
     Value: !Sub 'https://${FrontendDistribution.DomainName}'
+  UploadApiId:
+    Description: REST API ID of the upload API, used to force a stage redeployment.
+    Value: !Ref UploadApi
   FrontendBucketName:
     Description: Private S3 bucket that holds the deployed frontend.
     Value: !Ref FrontendBucket
