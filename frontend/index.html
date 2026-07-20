@@ -28,6 +28,7 @@
       .status[hidden] { display: none; }
       .status:not([hidden]) { display: flex; }
       .status.uploading { background: #1c3159; color: #dbeafe; }
+      .status.awaiting-confirmation { background: #3d315c; color: #ede9fe; }
       .status.uploaded { background: #123c31; color: #d1fae5; }
       .status.error { background: #4a1f2a; color: #ffe0e4; }
       .spinner { width: 1rem; height: 1rem; flex: 0 0 auto; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .75s linear infinite; }
@@ -99,11 +100,19 @@
           setStatus('uploading', 'UPLOADING: Sending your file to secure storage…');
           const putResponse = await fetch(upload.uploadUrl, {
             method: 'PUT',
-            headers: { 'Content-Type': upload.contentType, 'x-amz-meta-email': email },
+            headers: { 'Content-Type': upload.contentType, 'x-amz-meta-submission-id': upload.submissionId },
             body: file
           });
           if (!putResponse.ok) throw new Error('The file could not be saved. Please try again.');
-          setStatus('uploaded', 'UPLOADED: Your file was saved successfully.');
+          setStatus('uploading', 'UPLOADED: Requesting email confirmation…');
+          const completeResponse = await fetch(upload.completeUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ submissionId: upload.submissionId })
+          });
+          const completion = await completeResponse.json().catch(() => ({}));
+          if (!completeResponse.ok) throw new Error(completion.message || 'Could not send the confirmation email.');
+          setStatus('awaiting-confirmation', 'AWAITING_CONFIRMATION: Check your email and click the one-time link to confirm this upload.');
           form.reset();
           fileName.textContent = 'No file selected';
         } catch (error) {

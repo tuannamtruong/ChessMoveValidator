@@ -18,6 +18,7 @@ set +a
 : "${GITHUB_CONNECTION_ARN:?GITHUB_CONNECTION_ARN must be set in .env}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set in .env}"
 : "${GITHUB_BRANCH:?GITHUB_BRANCH must be set in .env}"
+: "${CONFIRMATION_EMAIL_FROM:?CONFIRMATION_EMAIL_FROM must be set in .env}"
 
 aws cloudformation deploy \
   --region "$AWS_REGION" \
@@ -27,4 +28,5 @@ aws cloudformation deploy \
   --parameter-overrides \
     "GitHubConnectionArn=$GITHUB_CONNECTION_ARN" \
     "GitHubRepository=$GITHUB_REPOSITORY" \
-    "GitHubBranch=$GITHUB_BRANCH"
+    "GitHubBranch=$GITHUB_BRANCH" \
+    "ConfirmationEmailFrom=$CONFIRMATION_EMAIL_FROM"

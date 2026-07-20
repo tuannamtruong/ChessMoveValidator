@@ -19,6 +19,15 @@ Parameters:
     Type: String
     Default: main
     Description: Branch that deploys the frontend.
+  ConfirmationEmailFrom:
+    Type: String
+    Description: Verified Amazon SES email address used to send upload-confirmation emails.
+  ConfirmationLinkExpiryHours:
+    Type: Number
+    Default: 24
+    MinValue: 1
+    MaxValue: 168
+    Description: Number of hours an upload confirmation link remains valid.
 
 Resources:
   FrontendBucket:
@@ -70,6 +79,22 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
+  SubmissionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: submissionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: submissionId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+
   UploadFunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -81,7 +106,7 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: WriteUploadUrls
+        - PolicyName: CreateUploadSubmissions
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -94,6 +119,9 @@ Resources:
               - Effect: Allow
                 Action: s3:PutObject
                 Resource: !Sub '${UploadBucket.Arn}/uploads/*'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt SubmissionsTable.Arn
 
   UploadFunction:
     Type: AWS::Lambda::Function
@@ -106,13 +134,15 @@ Resources:
       Environment:
         Variables:
           UPLOAD_BUCKET: !Ref UploadBucket
+          SUBMISSIONS_TABLE: !Ref SubmissionsTable
+          COMPLETE_URL: !Sub 'https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/upload-complete'
       Code:
         ZipFile: |
-          import base64
           import boto3
           import json
           import os
           import re
+          import time
           import uuid
           from botocore.config import Config
 
@@ -129,6 +159,7 @@ Resources:
           EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
           CONTENT_TYPE = re.compile(r'^[^\s/;]+/[^\s;]+$')
           MAX_SIZE = 10 * 1024 * 1024
+          db = boto3.resource('dynamodb').Table(os.environ['SUBMISSIONS_TABLE'])
 
           def response(status, body):
               return {'statusCode': status, 'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}, 'body': json.dumps(body)}
@@ -143,12 +174,21 @@ Resources:
                   if not EMAIL.match(email) or not filename or not CONTENT_TYPE.match(content_type) or not isinstance(size, int) or size < 1 or size > MAX_SIZE:
                       return response(400, {'message': 'Provide a valid email and a file up to 10 MB.'})
                   extension = os.path.splitext(filename)[1][:16]
-                  key = 'uploads/{}/{}{}'.format(uuid.uuid4(), uuid.uuid4(), extension)
+                  submission_id = str(uuid.uuid4())
+                  key = 'uploads/{}{}' .format(submission_id, extension)
+                  db.put_item(Item={
+                      'submissionId': submission_id, 'email': email, 'objectKey': key,
+                      'status': 'UPLOADING', 'createdAt': int(time.time()),
+                      'expiresAt': int(time.time()) + 3600
+                  })
                   url = s3.generate_presigned_url('put_object', Params={
                       'Bucket': os.environ['UPLOAD_BUCKET'], 'Key': key,
-                      'ContentType': content_type, 'Metadata': {'email': email}
+                      'ContentType': content_type, 'Metadata': {'submission-id': submission_id}
                   }, ExpiresIn=300)
-                  return response(200, {'uploadUrl': url, 'contentType': content_type})
+                  return response(200, {
+                      'submissionId': submission_id, 'uploadUrl': url,
+                      'contentType': content_type, 'completeUrl': os.environ['COMPLETE_URL']
+                  })
               except (ValueError, TypeError):
                   return response(400, {'message': 'Invalid upload request.'})
               except Exception:
@@ -159,12 +199,221 @@ Resources:
     Properties:
       Name: !Sub '${ProjectName}-upload-api'
 
+  UploadCompleteFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SendUploadConfirmations
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-upload-complete*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt SubmissionsTable.Arn
+              - Effect: Allow
+                Action: s3:HeadObject
+                Resource: !Sub '${UploadBucket.Arn}/uploads/*'
+              - Effect: Allow
+                Action: ses:SendEmail
+                Resource: '*'
+
+  UploadCompleteFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-upload-complete'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt UploadCompleteFunctionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          SUBMISSIONS_TABLE: !Ref SubmissionsTable
+          UPLOAD_BUCKET: !Ref UploadBucket
+          EMAIL_FROM: !Ref ConfirmationEmailFrom
+          CONFIRM_URL: !Sub 'https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/confirm'
+          CONFIRMATION_LINK_EXPIRY_HOURS: !Ref ConfirmationLinkExpiryHours
+      Code:
+        ZipFile: |
+          import base64
+          import boto3
+          import hashlib
+          import json
+          import os
+          import secrets
+          import time
+          from botocore.exceptions import ClientError
+
+          table = boto3.resource('dynamodb').Table(os.environ['SUBMISSIONS_TABLE'])
+          ses = boto3.client('ses')
+          s3 = boto3.client('s3')
+
+          def response(status, body):
+              return {'statusCode': status, 'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}, 'body': json.dumps(body)}
+
+          def handler(event, context):
+              try:
+                  body = json.loads(event.get('body') or '{}')
+                  submission_id = body.get('submissionId', '')
+                  if not submission_id:
+                      return response(400, {'message': 'A submission ID is required.'})
+                  item = table.get_item(Key={'submissionId': submission_id}).get('Item')
+                  if not item or item.get('status') != 'UPLOADING':
+                      return response(200, {'status': item.get('status', 'ERROR') if item else 'ERROR'})
+                  try:
+                      s3.head_object(Bucket=os.environ['UPLOAD_BUCKET'], Key=item['objectKey'])
+                  except ClientError:
+                      return response(400, {'message': 'The uploaded file could not be verified.'})
+                  token = secrets.token_urlsafe(32)
+                  token_hash = hashlib.sha256(token.encode()).hexdigest()
+                  expiry_seconds = int(os.environ['CONFIRMATION_LINK_EXPIRY_HOURS']) * 3600
+                  expires_at = int(time.time()) + expiry_seconds
+                  try:
+                      update = table.update_item(
+                          Key={'submissionId': submission_id},
+                          UpdateExpression='SET #status = :awaiting, confirmationTokenHash = :token, expiresAt = :expires',
+                          ConditionExpression='#status = :uploading',
+                          ReturnValues='ALL_NEW',
+                          ExpressionAttributeNames={'#status': 'status'},
+                          ExpressionAttributeValues={
+                              ':awaiting': 'AWAITING_CONFIRMATION', ':uploading': 'UPLOADING',
+                              ':token': token_hash, ':expires': expires_at
+                          })
+                  except ClientError as error:
+                      if error.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                          return response(200, {'status': 'AWAITING_CONFIRMATION'})
+                      raise
+                  link = '{}?submissionId={}&token={}'.format(os.environ['CONFIRM_URL'], submission_id, token)
+                  ses.send_email(
+                      Source=os.environ['EMAIL_FROM'], Destination={'ToAddresses': [update['Attributes']['email']]},
+                      Message={'Subject': {'Data': 'Confirm your Chess Move Validator upload'},
+                               'Body': {'Text': {'Data': 'Confirm this specific upload by opening this one-time link: {}\n\nThis link expires in {} hours.'.format(link, expiry_seconds // 3600)}}})
+                  return response(200, {'status': 'AWAITING_CONFIRMATION'})
+              except (ValueError, TypeError):
+                  return response(400, {'message': 'Invalid upload completion request.'})
+              except Exception:
+                  return response(500, {'message': 'Could not send the confirmation email.'})
+
+  ConfirmFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ConfirmSpecificUpload
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-confirm-upload*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt SubmissionsTable.Arn
+              - Effect: Allow
+                Action: s3:HeadObject
+                Resource: !Sub '${UploadBucket.Arn}/uploads/*'
+
+  ConfirmFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-confirm-upload'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt ConfirmFunctionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          SUBMISSIONS_TABLE: !Ref SubmissionsTable
+          UPLOAD_BUCKET: !Ref UploadBucket
+      Code:
+        ZipFile: |
+          import boto3
+          import hashlib
+          import html
+          import os
+          import time
+          from botocore.exceptions import ClientError
+
+          table = boto3.resource('dynamodb').Table(os.environ['SUBMISSIONS_TABLE'])
+          s3 = boto3.client('s3')
+
+          def page(title, message, status=200):
+              return {'statusCode': status, 'headers': {'Content-Type': 'text/html; charset=utf-8'}, 'body': '<!doctype html><title>{}</title><h1>{}</h1><p>{}</p>'.format(html.escape(title), html.escape(title), html.escape(message))}
+
+          def handler(event, context):
+              params = event.get('queryStringParameters') or {}
+              submission_id, token = params.get('submissionId', ''), params.get('token', '')
+              if not submission_id or not token:
+                  return page('Invalid confirmation link', 'This confirmation link is incomplete.', 400)
+              item = table.get_item(Key={'submissionId': submission_id}).get('Item')
+              token_hash = hashlib.sha256(token.encode()).hexdigest()
+              if not item or item.get('confirmationTokenHash') != token_hash:
+                  return page('Invalid confirmation link', 'This link does not match an upload.', 400)
+              if item.get('status') == 'CONFIRMED':
+                  return page('Upload already confirmed', 'This upload was already confirmed. No other upload was changed.')
+              if item.get('status') != 'AWAITING_CONFIRMATION' or item.get('expiresAt', 0) < int(time.time()):
+                  return page('Confirmation link unavailable', 'This link has expired or is no longer active.', 400)
+              try:
+                  s3.head_object(Bucket=os.environ['UPLOAD_BUCKET'], Key=item['objectKey'])
+                  table.update_item(
+                      Key={'submissionId': submission_id},
+                      UpdateExpression='SET #status = :confirmed, confirmedAt = :now REMOVE expiresAt',
+                      ConditionExpression='#status = :awaiting AND confirmationTokenHash = :token',
+                      ExpressionAttributeNames={'#status': 'status'},
+                      ExpressionAttributeValues={':confirmed': 'CONFIRMED', ':awaiting': 'AWAITING_CONFIRMATION', ':token': token_hash, ':now': int(time.time())})
+                  return page('Upload confirmed', 'Your specific upload has been confirmed.')
+              except ClientError as error:
+                  if error.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                      return page('Upload already confirmed', 'This upload was already confirmed. No other upload was changed.')
+                  return page('Upload unavailable', 'The uploaded file could not be verified.', 400)
+              except Exception:
+                  return page('Confirmation unavailable', 'Please try the link again later.', 500)
+
   UploadApiResource:
     Type: AWS::ApiGateway::Resource
     Properties:
       RestApiId: !Ref UploadApi
       ParentId: !GetAtt UploadApi.RootResourceId
       PathPart: upload-url
+
+  UploadCompleteApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UploadApi
+      ParentId: !GetAtt UploadApi.RootResourceId
+      PathPart: upload-complete
+
+  ConfirmApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UploadApi
+      ParentId: !GetAtt UploadApi.RootResourceId
+      PathPart: confirm
 
   UploadApiMethod:
     Type: AWS::ApiGateway::Method
@@ -202,6 +451,54 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  UploadCompleteApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UploadApi
+      ResourceId: !Ref UploadCompleteApiResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UploadCompleteFunction.Arn}/invocations'
+
+  UploadCompleteApiOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UploadApi
+      ResourceId: !Ref UploadCompleteApiResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ConfirmApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UploadApi
+      ResourceId: !Ref ConfirmApiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConfirmFunction.Arn}/invocations'
+
   UploadApiPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -210,11 +507,30 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/POST/upload-url'
 
+  UploadCompleteApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref UploadCompleteFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/POST/upload-complete'
+
+  ConfirmApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ConfirmFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/GET/confirm'
+
   UploadApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
       - UploadApiMethod
       - UploadApiOptionsMethod
+      - UploadCompleteApiMethod
+      - UploadCompleteApiOptionsMethod
+      - ConfirmApiMethod
     Properties:
       RestApiId: !Ref UploadApi
 
