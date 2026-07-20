@@ -4,5 +4,6 @@ phases:
   build:
     commands:
       - test -f frontend/index.html
+      - printf 'window.UPLOAD_API_URL = "%s";\n' "$UPLOAD_API_URL" > frontend/config.js
       - aws s3 sync frontend/ "s3://${FRONTEND_BUCKET}/" --delete --only-show-errors
       - aws cloudfront create-invalidation --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths '/*'

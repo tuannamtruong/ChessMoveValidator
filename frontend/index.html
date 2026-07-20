@@ -5,17 +5,113 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Chess Move Validator</title>
     <style>
-      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-      body { display: grid; min-height: 100vh; margin: 0; place-items: center; background: #111827; color: #f9fafb; }
-      main { max-width: 42rem; padding: 2rem; text-align: center; }
-      h1 { margin-bottom: .5rem; }
-      p { color: #cbd5e1; }
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 2rem 1rem; background: radial-gradient(circle at top left, #24386c, transparent 38rem), #0b1020; color: #f8fafc; }
+      main { width: min(100%, 34rem); }
+      header { text-align: center; margin-bottom: 1.75rem; }
+      h1 { margin: 0 0 .5rem; font-size: clamp(2rem, 7vw, 3rem); letter-spacing: -.045em; }
+      header p { margin: 0; color: #b6c3dc; }
+      form { padding: 1.5rem; border: 1px solid #33415f; border-radius: 1rem; background: rgba(18, 27, 49, .9); box-shadow: 0 1.5rem 4rem rgba(0,0,0,.25); }
+      label { display: block; margin-bottom: .5rem; font-size: .9rem; font-weight: 650; }
+      input[type="email"] { width: 100%; padding: .8rem .9rem; border: 1px solid #52617f; border-radius: .55rem; background: #0e172a; color: inherit; font: inherit; }
+      input[type="email"]:focus, .file-picker:focus-within { outline: 3px solid #5878d9; outline-offset: 2px; border-color: #8da8ff; }
+      .field { margin-bottom: 1.25rem; }
+      .file-picker { display: grid; place-items: center; min-height: 8.5rem; padding: 1rem; border: 1px dashed #7184ad; border-radius: .7rem; color: #c8d5ee; text-align: center; cursor: pointer; }
+      .file-picker:hover { background: #1b2948; }
+      .file-picker input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+      .file-name { display: block; margin-top: .45rem; font-size: .85rem; color: #93c5fd; overflow-wrap: anywhere; }
+      button { width: 100%; padding: .85rem 1rem; border: 0; border-radius: .55rem; background: #7190ff; color: #081127; font: inherit; font-weight: 750; cursor: pointer; }
+      button:hover { background: #91aaff; }
+      button:disabled { cursor: wait; opacity: .6; }
+      .status { display: none; gap: .65rem; align-items: flex-start; margin: 1rem 0 0; padding: .85rem 1rem; border-radius: .55rem; font-size: .92rem; }
+      .status[hidden] { display: none; }
+      .status:not([hidden]) { display: flex; }
+      .status.uploading { background: #1c3159; color: #dbeafe; }
+      .status.uploaded { background: #123c31; color: #d1fae5; }
+      .status.error { background: #4a1f2a; color: #ffe0e4; }
+      .spinner { width: 1rem; height: 1rem; flex: 0 0 auto; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .75s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
+    <script src="config.js"></script>
   </head>
   <body>
     <main>
-      <h1>Chess Move Validator</h1>
-      <p>Hello World — the frontend deployment is working.</p>
+      <header>
+        <h1>Chess Move Validator</h1>
+        <p>Upload a game file and we’ll let you know when it is ready.</p>
+      </header>
+      <form id="upload-form">
+        <div class="field">
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+        </div>
+        <div class="field">
+          <label for="file">Game file</label>
+          <label class="file-picker" for="file">
+            <span>Choose a file to upload</span>
+            <span class="file-name" id="file-name">No file selected</span>
+            <input id="file" name="file" type="file" required>
+          </label>
+        </div>
+        <button id="submit" type="submit">Upload file</button>
+        <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+      </form>
     </main>
+    <script>
+      const form = document.querySelector('#upload-form');
+      const fileInput = document.querySelector('#file');
+      const fileName = document.querySelector('#file-name');
+      const submit = document.querySelector('#submit');
+      const status = document.querySelector('#status');
+
+      function setStatus(state, message) {
+        status.className = `status ${state}`;
+        status.innerHTML = state === 'uploading' ? `<span class="spinner" aria-hidden="true"></span><span>${message}</span>` : `<span>${message}</span>`;
+        status.hidden = false;
+      }
+
+      fileInput.addEventListener('change', () => {
+        fileName.textContent = fileInput.files[0] ? fileInput.files[0].name : 'No file selected';
+      });
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const file = fileInput.files[0];
+        const email = document.querySelector('#email').value.trim();
+        if (!file) return;
+        if (!window.UPLOAD_API_URL) {
+          setStatus('error', 'ERROR: The upload service is not configured.');
+          return;
+        }
+
+        submit.disabled = true;
+        setStatus('uploading', 'UPLOADING: Preparing your secure upload…');
+        try {
+          const urlResponse = await fetch(window.UPLOAD_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, fileName: file.name, contentType: file.type || 'application/octet-stream', size: file.size })
+          });
+          const upload = await urlResponse.json().catch(() => ({}));
+          if (!urlResponse.ok) throw new Error(upload.message || 'Could not prepare the upload.');
+
+          setStatus('uploading', 'UPLOADING: Sending your file to secure storage…');
+          const putResponse = await fetch(upload.uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': upload.contentType, 'x-amz-meta-email': email },
+            body: file
+          });
+          if (!putResponse.ok) throw new Error('The file could not be saved. Please try again.');
+          setStatus('uploaded', 'UPLOADED: Your file was saved successfully.');
+          form.reset();
+          fileName.textContent = 'No file selected';
+        } catch (error) {
+          setStatus('error', `ERROR: ${error.message || 'Upload failed. Please try again.'}`);
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    </script>
   </body>
 </html>

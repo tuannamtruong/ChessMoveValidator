@@ -38,6 +38,184 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - content-type
+              - x-amz-meta-email
+            AllowedMethods:
+              - PUT
+            AllowedOrigins:
+              - https://*.cloudfront.net
+            MaxAge: 300
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      VersioningConfiguration:
+        Status: Enabled
+
+  UploadFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: WriteUploadUrls
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-upload-url*'
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${UploadBucket.Arn}/uploads/*'
+
+  UploadFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-upload-url'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt UploadFunctionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          UPLOAD_BUCKET: !Ref UploadBucket
+      Code:
+        ZipFile: |
+          import base64
+          import boto3
+          import json
+          import os
+          import re
+          import uuid
+
+          s3 = boto3.client('s3')
+          EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+          CONTENT_TYPE = re.compile(r'^[^\s/;]+/[^\s;]+$')
+          MAX_SIZE = 10 * 1024 * 1024
+
+          def response(status, body):
+              return {'statusCode': status, 'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}, 'body': json.dumps(body)}
+
+          def handler(event, context):
+              try:
+                  body = json.loads(event.get('body') or '{}')
+                  email = body.get('email', '').strip().lower()
+                  filename = os.path.basename(body.get('fileName', ''))
+                  content_type = body.get('contentType') or 'application/octet-stream'
+                  size = body.get('size', 0)
+                  if not EMAIL.match(email) or not filename or not CONTENT_TYPE.match(content_type) or not isinstance(size, int) or size < 1 or size > MAX_SIZE:
+                      return response(400, {'message': 'Provide a valid email and a file up to 10 MB.'})
+                  extension = os.path.splitext(filename)[1][:16]
+                  key = 'uploads/{}/{}{}'.format(uuid.uuid4(), uuid.uuid4(), extension)
+                  url = s3.generate_presigned_url('put_object', Params={
+                      'Bucket': os.environ['UPLOAD_BUCKET'], 'Key': key,
+                      'ContentType': content_type, 'Metadata': {'email': email}
+                  }, ExpiresIn=300)
+                  return response(200, {'uploadUrl': url, 'contentType': content_type})
+              except (ValueError, TypeError):
+                  return response(400, {'message': 'Invalid upload request.'})
+              except Exception:
+                  return response(500, {'message': 'Could not prepare the upload.'})
+
+  UploadApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-upload-api'
+
+  UploadApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref UploadApi
+      ParentId: !GetAtt UploadApi.RootResourceId
+      PathPart: upload-url
+
+  UploadApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UploadApi
+      ResourceId: !Ref UploadApiResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UploadFunction.Arn}/invocations'
+
+  UploadApiOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref UploadApi
+      ResourceId: !Ref UploadApiResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  UploadApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref UploadFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/POST/upload-url'
+
+  UploadApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - UploadApiMethod
+      - UploadApiOptionsMethod
+    Properties:
+      RestApiId: !Ref UploadApi
+
+  UploadApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref UploadApi
+      DeploymentId: !Ref UploadApiDeployment
+      StageName: prod
+
   FrontendOriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
@@ -169,6 +347,9 @@ Resources:
           - Name: CLOUDFRONT_DISTRIBUTION_ID
             Type: PLAINTEXT
             Value: !Ref FrontendDistribution
+          - Name: UPLOAD_API_URL
+            Type: PLAINTEXT
+            Value: !Sub 'https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/upload-url'
       Source:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
@@ -255,6 +436,9 @@ Outputs:
   FrontendBucketName:
     Description: Private S3 bucket that holds the deployed frontend.
     Value: !Ref FrontendBucket
+  UploadBucketName:
+    Description: Private S3 bucket that holds user-uploaded files.
+    Value: !Ref UploadBucket
   PipelineName:
     Description: Pipeline that deploys frontend changes from GitHub.
     Value: !Ref FrontendPipeline

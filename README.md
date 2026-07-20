@@ -3,7 +3,9 @@
 ## First deployment phase
 
 This repository contains a static Hello World frontend and the CloudFormation
-template that deploys it through CloudFront. A CodePipeline watches a GitHub
+template that deploys it through CloudFront. The frontend accepts an email and
+uploads a selected file to a separate private S3 bucket using a short-lived
+signed URL. A CodePipeline watches a GitHub
 branch and invokes CodeBuild on each change. CodeBuild synchronizes
 `frontend/` to the private origin bucket and creates a CloudFront invalidation.
 
