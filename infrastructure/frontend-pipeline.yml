@@ -114,8 +114,18 @@ Resources:
           import os
           import re
           import uuid
+          from botocore.config import Config
 
-          s3 = boto3.client('s3')
+          # A global S3 endpoint redirects this eu-central-1 bucket to its
+          # regional endpoint. Browsers cannot safely follow that redirect for
+          # a CORS preflighted presigned PUT, so sign the regional URL directly.
+          region = os.environ['AWS_REGION']
+          s3 = boto3.client(
+              's3',
+              region_name=region,
+              endpoint_url='https://s3.{}.amazonaws.com'.format(region),
+              config=Config(signature_version='s3v4', s3={'addressing_style': 'virtual'})
+          )
           EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
           CONTENT_TYPE = re.compile(r'^[^\s/;]+/[^\s;]+$')
           MAX_SIZE = 10 * 1024 * 1024
