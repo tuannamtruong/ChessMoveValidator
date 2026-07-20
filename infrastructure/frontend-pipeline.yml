@@ -230,7 +230,7 @@ Resources:
                   - dynamodb:UpdateItem
                 Resource: !GetAtt SubmissionsTable.Arn
               - Effect: Allow
-                Action: s3:HeadObject
+                Action: s3:GetObject
                 Resource: !Sub '${UploadBucket.Arn}/uploads/*'
               - Effect: Allow
                 Action: ses:SendEmail
@@ -339,7 +339,7 @@ Resources:
                   - dynamodb:UpdateItem
                 Resource: !GetAtt SubmissionsTable.Arn
               - Effect: Allow
-                Action: s3:HeadObject
+                Action: s3:GetObject
                 Resource: !Sub '${UploadBucket.Arn}/uploads/*'
 
   ConfirmFunction:
