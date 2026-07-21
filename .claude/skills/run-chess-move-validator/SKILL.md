@@ -6,7 +6,7 @@ description: Run, test, and validate the Chess Move Validator after any change �
 # Run & validate the Chess Move Validator
 
 This project has no locally-runnable "server" — it is AWS infrastructure
-(`infrastructure/frontend-pipeline.yml`: S3 + DynamoDB + Lambda + API Gateway +
+(`infrastructure/cmw-infra.yml`: S3 + DynamoDB + Lambda + API Gateway +
 SES) plus a static `frontend/`. So "run it" means **drive every layer's
 behavior locally and confirm the change works without regressing what shipped.**
 
@@ -20,7 +20,7 @@ That one command sets up its own tooling on first run (a `tests/.venv` and Node
 deps) and runs four suites in order, printing `PASS`/`FAIL` per suite and
 exiting non-zero if any fail:
 
-1. **deploy-script syntax** — `bash -n scripts/deploy-frontend.sh`
+1. **deploy-script syntax** — `bash -n scripts/deploy-cmw-infra.sh`
 2. **infrastructure** — `cfn-lint` + `aws cloudformation validate-template`
 3. **lambda handlers** — behavioral tests of the inline Python handlers (boto3 mocked)
 4. **frontend smoke** — headless Chromium loads `frontend/`, exercises the form, writes a screenshot
@@ -134,6 +134,6 @@ The frontend suite leaves a screenshot at `tests/screenshots/frontend.png` —
 ## Not covered here
 
 No suite deploys the stack or calls the live API/SES — that needs `.env` and a
-real `./scripts/deploy-frontend.sh` run, which per project rules happens only
+real `./scripts/deploy-cmw-infra.sh` run, which per project rules happens only
 when the user explicitly asks. These tests validate everything reachable
 without deploying.

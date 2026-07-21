@@ -17,7 +17,7 @@ After a successful upload, the page shows `AWAITING_CONFIRMATION` until the reci
 ### Deploy
 
 ```bash
-./scripts/deploy-frontend.sh
+./scripts/deploy-cmw-infra.sh
 ```
 
 After the initial stack deployment, commit and push changes to the configured branch. The pipeline will redeploy `frontend/` automatically. Retrieve the website address with:
@@ -25,7 +25,7 @@ After the initial stack deployment, commit and push changes to the configured br
 ```bash
 aws cloudformation describe-stacks \
   --region eu-central-1 \
-  --stack-name chess-move-validator-frontend \
+  --stack-name chess-move-validator-stack \
   --query "Stacks[0].Outputs[?OutputKey=='FrontendUrl'].OutputValue" \
   --output text
 ```

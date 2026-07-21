@@ -1,7 +1,7 @@
 """Extract inline Lambda source (Code.ZipFile) from the CloudFormation template.
 
 All Lambda code in this project lives inline in
-infrastructure/frontend-pipeline.yml as `Code.ZipFile` blocks, so unit tests
+infrastructure/cmw-infra.yml as `Code.ZipFile` blocks, so unit tests
 have to pull the source back out of the YAML. CloudFormation uses custom tags
 (!Sub, !Ref, !GetAtt, ...) that stock PyYAML rejects; register a permissive
 multi-constructor so the document parses and we can reach the ZipFile strings.
@@ -11,7 +11,7 @@ import yaml
 
 TEMPLATE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "infrastructure", "frontend-pipeline.yml",
+    "infrastructure", "cmw-infra.yml",
 )
 
 

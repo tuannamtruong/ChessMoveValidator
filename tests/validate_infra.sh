@@ -6,7 +6,7 @@
 set -euo pipefail
 
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-template="$repo_root/infrastructure/frontend-pipeline.yml"
+template="$repo_root/infrastructure/cmw-infra.yml"
 region="${AWS_REGION:-eu-central-1}"
 
 # Use the tests venv's cfn-lint if present, else whatever is on PATH.

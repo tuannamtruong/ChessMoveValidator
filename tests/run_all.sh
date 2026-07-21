@@ -46,7 +46,7 @@ run() { # run <label> <command...>
   fi
 }
 
-run "deploy-script syntax" bash -n "$repo_root/scripts/deploy-frontend.sh"
+run "deploy-script syntax" bash -n "$repo_root/scripts/deploy-cmw-infra.sh"
 run "infrastructure"       env AWS_REGION="$region" bash "$here/validate_infra.sh"
 run "lambda handlers"      bash -c "cd '$here' && '$py' test_lambdas.py"
 run "frontend smoke"       node "$here/smoke_frontend.mjs"

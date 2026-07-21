@@ -61,7 +61,7 @@ trap 'rm -f "$packaged_template"' EXIT
 
 aws cloudformation package \
   --region "$AWS_REGION" \
-  --template-file "$repo_root/infrastructure/frontend-pipeline.yml" \
+  --template-file "$repo_root/infrastructure/cmw-infra.yml" \
   --s3-bucket "$package_bucket" \
   --output-template-file "$packaged_template"
 
@@ -93,6 +93,6 @@ if [ -n "${DEPLOYMENT_VERSION:-}" ]; then
     --region "$AWS_REGION" \
     --rest-api-id "$api_id" \
     --stage-name prod \
-    --description "deploy-frontend.sh $DEPLOYMENT_VERSION" \
+    --description "deploy-cmw-infra.sh $DEPLOYMENT_VERSION" \
     --no-cli-pager >/dev/null
 fi
