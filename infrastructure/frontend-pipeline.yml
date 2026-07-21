@@ -312,6 +312,62 @@ Resources:
               except Exception:
                   return response(500, {'message': 'Could not send the confirmation email.'})
 
+  EvaluatorFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EvaluateMoveFile
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-evaluate-moves*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt SubmissionsTable.Arn
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${UploadBucket.Arn}/uploads/*"
+              - Effect: Allow
+                Action: ses:SendEmail
+                Resource: "*"
+
+  EvaluatorFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      # Code is a local path resolved by `aws cloudformation package` at deploy
+      # time; W3002 flags exactly that intentional requirement.
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3002
+    Properties:
+      FunctionName: !Sub "${ProjectName}-evaluate-moves"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt EvaluatorFunctionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          SUBMISSIONS_TABLE: !Ref SubmissionsTable
+          UPLOAD_BUCKET: !Ref UploadBucket
+          EMAIL_FROM: !Ref ConfirmationEmailFrom
+      Code: ../functions/evaluate_moves
+
   ConfirmFunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -341,6 +397,9 @@ Resources:
               - Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub "${UploadBucket.Arn}/uploads/*"
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt EvaluatorFunction.Arn
 
   ConfirmFunction:
     Type: AWS::Lambda::Function
@@ -354,17 +413,31 @@ Resources:
         Variables:
           SUBMISSIONS_TABLE: !Ref SubmissionsTable
           UPLOAD_BUCKET: !Ref UploadBucket
+          EVALUATOR_FUNCTION: !Ref EvaluatorFunction
       Code:
         ZipFile: |
           import boto3
           import hashlib
           import html
+          import json
           import os
           import time
           from botocore.exceptions import ClientError
 
           table = boto3.resource('dynamodb').Table(os.environ['SUBMISSIONS_TABLE'])
           s3 = boto3.client('s3')
+          lambda_client = boto3.client('lambda')
+
+          def start_evaluation(submission_id):
+              # Best-effort async hand-off to the move evaluator. The upload is
+              # already confirmed; a failed invoke must not fail the page.
+              try:
+                  lambda_client.invoke(
+                      FunctionName=os.environ['EVALUATOR_FUNCTION'],
+                      InvocationType='Event',
+                      Payload=json.dumps({'submissionId': submission_id}).encode())
+              except Exception:
+                  pass
 
           def page(title, message, status=200):
               return {'statusCode': status, 'headers': {'Content-Type': 'text/html; charset=utf-8'}, 'body': '<!doctype html><title>{}</title><h1>{}</h1><p>{}</p>'.format(html.escape(title), html.escape(title), html.escape(message))}
@@ -390,7 +463,8 @@ Resources:
                       ConditionExpression='#status = :awaiting AND confirmationTokenHash = :token',
                       ExpressionAttributeNames={'#status': 'status'},
                       ExpressionAttributeValues={':confirmed': 'CONFIRMED', ':awaiting': 'AWAITING_CONFIRMATION', ':token': token_hash, ':now': int(time.time())})
-                  return page('Upload confirmed', 'Your specific upload has been confirmed.')
+                  start_evaluation(submission_id)
+                  return page('Upload confirmed', 'Your specific upload has been confirmed. We are validating your chess moves and will email you the result shortly.')
               except ClientError as error:
                   if error.response['Error']['Code'] == 'ConditionalCheckFailedException':
                       return page('Upload already confirmed', 'This upload was already confirmed. No other upload was changed.')

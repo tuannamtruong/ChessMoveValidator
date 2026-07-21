@@ -35,9 +35,39 @@ else
 fi
 
 
-aws cloudformation deploy \
+# The evaluator Lambda's source is too large for an inline Code.ZipFile (the
+# 4096-char CloudFormation limit), so it lives under functions/ and is uploaded
+# by `aws cloudformation package`, which rewrites its Code to an S3 reference.
+# Packaging needs a bucket that already exists (the stack's own ArtifactBucket
+# can't be used — it doesn't exist yet on the first deploy), so derive a stable
+# per-account bucket name and create it once if missing.
+account_id="$(aws sts get-caller-identity --query Account --output text)"
+package_bucket="${PACKAGE_BUCKET:-${STACK_NAME}-art-${account_id}}"
+
+if ! aws s3api head-bucket --bucket "$package_bucket" >/dev/null 2>&1; then
+  echo "Creating packaging bucket $package_bucket"
+  aws s3api create-bucket \
+    --bucket "$package_bucket" \
+    --region "$AWS_REGION" \
+    --create-bucket-configuration LocationConstraint="$AWS_REGION" >/dev/null
+  aws s3api put-public-access-block \
+    --bucket "$package_bucket" \
+    --public-access-block-configuration \
+      BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+fi
+
+packaged_template="$(mktemp)"
+trap 'rm -f "$packaged_template"' EXIT
+
+aws cloudformation package \
   --region "$AWS_REGION" \
   --template-file "$repo_root/infrastructure/frontend-pipeline.yml" \
+  --s3-bucket "$package_bucket" \
+  --output-template-file "$packaged_template"
+
+aws cloudformation deploy \
+  --region "$AWS_REGION" \
+  --template-file "$packaged_template" \
   --stack-name "$STACK_NAME" \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides "${params[@]}"
