@@ -45,7 +45,9 @@ def lambda_sources(path=TEMPLATE):
         if res.get("Type") != "AWS::Lambda::Function":
             continue
         code = (res.get("Properties") or {}).get("Code") or {}
-        if "ZipFile" in code:
+        # Packaged functions set Code to a local-path string; only inline
+        # functions carry a ZipFile. Guard the type so the former is skipped.
+        if isinstance(code, dict) and "ZipFile" in code:
             out[logical_id] = code["ZipFile"]
     return out
 
