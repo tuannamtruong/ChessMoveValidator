@@ -98,9 +98,14 @@ The frontend suite leaves a screenshot at `tests/screenshots/frontend.png` —
 
 ## Gotchas
 
-- **Lambdas are inline in the template**, not separate files. Tests exec the
-  extracted `ZipFile` source, so a Python syntax error inside the YAML block
-  surfaces as a test-collection error, not a lint warning.
+- **Most Lambdas are inline in the template; the evaluator is a source file.**
+  The small handlers live inline (`Code.ZipFile`); tests exec the extracted
+  source, so a Python syntax error inside the YAML block surfaces as a test-
+  collection error, not a lint warning. The larger `evaluate-moves` function
+  exceeds CloudFormation's 4096-char inline limit, so it lives at
+  `functions/evaluate_moves/index.py` (packaged by `aws cloudformation package`
+  at deploy); its tests load that file directly. A guard in `test_lambdas.py`
+  fails if any inline handler grows past 4096 chars.
 - **`extract_lambda.py` must ignore CloudFormation tags.** Stock PyYAML throws
   on `!Sub`/`!Ref`/`!GetAtt`; the loader registers a permissive multi-
   constructor that collapses every `!`-tag to a plain value. Reuse it if you
