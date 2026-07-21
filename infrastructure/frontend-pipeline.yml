@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   First-phase infrastructure: a private S3-hosted frontend served by CloudFront
   and a GitHub-to-CodeBuild deployment pipeline.
@@ -7,7 +7,7 @@ Parameters:
   ProjectName:
     Type: String
     Default: chess-move-validator
-    AllowedPattern: '^[a-z][a-z0-9-]{2,40}$'
+    AllowedPattern: "^[a-z][a-z0-9-]{2,40}$"
     Description: Lowercase name used to identify resources.
   GitHubConnectionArn:
     Type: String
@@ -68,11 +68,11 @@ Resources:
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders:
-              - '*'
+              - "*"
             AllowedMethods:
               - PUT
             AllowedOrigins:
-              - '*'
+              - "*"
             MaxAge: 300
       LifecycleConfiguration:
         Rules:
@@ -103,7 +103,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -112,17 +112,17 @@ Resources:
       Policies:
         - PolicyName: CreateUploadSubmissions
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-upload-url*'
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-upload-url*"
               - Effect: Allow
                 Action: s3:PutObject
-                Resource: !Sub '${UploadBucket.Arn}/uploads/*'
+                Resource: !Sub "${UploadBucket.Arn}/uploads/*"
               - Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt SubmissionsTable.Arn
@@ -130,7 +130,7 @@ Resources:
   UploadFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${ProjectName}-upload-url'
+      FunctionName: !Sub "${ProjectName}-upload-url"
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt UploadFunctionRole.Arn
@@ -139,7 +139,7 @@ Resources:
         Variables:
           UPLOAD_BUCKET: !Ref UploadBucket
           SUBMISSIONS_TABLE: !Ref SubmissionsTable
-          COMPLETE_URL: !Sub 'https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/upload-complete'
+          COMPLETE_URL: !Sub "https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/upload-complete"
       Code:
         ZipFile: |
           import boto3
@@ -201,13 +201,13 @@ Resources:
   UploadApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: !Sub '${ProjectName}-upload-api'
+      Name: !Sub "${ProjectName}-upload-api"
 
   UploadCompleteFunctionRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -216,14 +216,14 @@ Resources:
       Policies:
         - PolicyName: SendUploadConfirmations
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-upload-complete*'
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-upload-complete*"
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
@@ -231,15 +231,15 @@ Resources:
                 Resource: !GetAtt SubmissionsTable.Arn
               - Effect: Allow
                 Action: s3:GetObject
-                Resource: !Sub '${UploadBucket.Arn}/uploads/*'
+                Resource: !Sub "${UploadBucket.Arn}/uploads/*"
               - Effect: Allow
                 Action: ses:SendEmail
-                Resource: '*'
+                Resource: "*"
 
   UploadCompleteFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${ProjectName}-upload-complete'
+      FunctionName: !Sub "${ProjectName}-upload-complete"
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt UploadCompleteFunctionRole.Arn
@@ -249,7 +249,7 @@ Resources:
           SUBMISSIONS_TABLE: !Ref SubmissionsTable
           UPLOAD_BUCKET: !Ref UploadBucket
           EMAIL_FROM: !Ref ConfirmationEmailFrom
-          CONFIRM_URL: !Sub 'https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/confirm'
+          CONFIRM_URL: !Sub "https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/confirm"
           CONFIRMATION_LINK_EXPIRY_HOURS: !Ref ConfirmationLinkExpiryHours
       Code:
         ZipFile: |
@@ -316,7 +316,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -325,14 +325,14 @@ Resources:
       Policies:
         - PolicyName: ConfirmSpecificUpload
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-confirm-upload*'
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-confirm-upload*"
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
@@ -340,12 +340,12 @@ Resources:
                 Resource: !GetAtt SubmissionsTable.Arn
               - Effect: Allow
                 Action: s3:GetObject
-                Resource: !Sub '${UploadBucket.Arn}/uploads/*'
+                Resource: !Sub "${UploadBucket.Arn}/uploads/*"
 
   ConfirmFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${ProjectName}-confirm-upload'
+      FunctionName: !Sub "${ProjectName}-confirm-upload"
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt ConfirmFunctionRole.Arn
@@ -429,7 +429,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UploadFunction.Arn}/invocations'
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UploadFunction.Arn}/invocations"
 
   UploadApiOptionsMethod:
     Type: AWS::ApiGateway::Method
@@ -465,7 +465,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UploadCompleteFunction.Arn}/invocations'
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UploadCompleteFunction.Arn}/invocations"
 
   UploadCompleteApiOptionsMethod:
     Type: AWS::ApiGateway::Method
@@ -501,7 +501,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConfirmFunction.Arn}/invocations'
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConfirmFunction.Arn}/invocations"
 
   UploadApiPermission:
     Type: AWS::Lambda::Permission
@@ -509,7 +509,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref UploadFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/POST/upload-url'
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/POST/upload-url"
 
   UploadCompleteApiPermission:
     Type: AWS::Lambda::Permission
@@ -517,7 +517,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref UploadCompleteFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/POST/upload-complete'
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/POST/upload-complete"
 
   ConfirmApiPermission:
     Type: AWS::Lambda::Permission
@@ -525,7 +525,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref ConfirmFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/GET/confirm'
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${UploadApi}/*/GET/confirm"
 
   UploadApiDeployment:
     Type: AWS::ApiGateway::Deployment
@@ -537,7 +537,7 @@ Resources:
       - ConfirmApiMethod
     Properties:
       RestApiId: !Ref UploadApi
-      Description: !Sub 'Deployment ${ApiDeploymentVersion}'
+      Description: !Sub "Deployment ${ApiDeploymentVersion}"
 
   UploadApiStage:
     Type: AWS::ApiGateway::Stage
@@ -550,7 +550,7 @@ Resources:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
-        Name: !Sub '${ProjectName}-frontend-oac'
+        Name: !Sub "${ProjectName}-frontend-oac"
         Description: CloudFront access to the private frontend bucket.
         OriginAccessControlOriginType: s3
         SigningBehavior: always
@@ -589,17 +589,17 @@ Resources:
     Properties:
       Bucket: !Ref FrontendBucket
       PolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Sid: AllowCloudFrontRead
             Effect: Allow
             Principal:
               Service: cloudfront.amazonaws.com
             Action: s3:GetObject
-            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Resource: !Sub "${FrontendBucket.Arn}/*"
             Condition:
               StringEquals:
-                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}'
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
 
   ArtifactBucket:
     Type: AWS::S3::Bucket
@@ -622,7 +622,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -631,14 +631,14 @@ Resources:
       Policies:
         - PolicyName: DeployFrontend
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-frontend-deploy*'
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-frontend-deploy*"
               - Effect: Allow
                 Action:
                   - s3:ListBucket
@@ -652,16 +652,16 @@ Resources:
                   - s3:PutObject
                   - s3:DeleteObject
                 Resource:
-                  - !Sub '${FrontendBucket.Arn}/*'
-                  - !Sub '${ArtifactBucket.Arn}/*'
+                  - !Sub "${FrontendBucket.Arn}/*"
+                  - !Sub "${ArtifactBucket.Arn}/*"
               - Effect: Allow
                 Action: cloudfront:CreateInvalidation
-                Resource: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}'
+                Resource: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
 
   FrontendDeployProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub '${ProjectName}-frontend-deploy'
+      Name: !Sub "${ProjectName}-frontend-deploy"
       Description: Deploys the static frontend and invalidates CloudFront.
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Artifacts:
@@ -679,7 +679,7 @@ Resources:
             Value: !Ref FrontendDistribution
           - Name: UPLOAD_API_URL
             Type: PLAINTEXT
-            Value: !Sub 'https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/upload-url'
+            Value: !Sub "https://${UploadApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/upload-url"
       Source:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
@@ -689,7 +689,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -698,7 +698,7 @@ Resources:
       Policies:
         - PolicyName: SourceAndDeploy
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
@@ -718,7 +718,7 @@ Resources:
                   - s3:GetObject
                   - s3:GetObjectVersion
                   - s3:PutObject
-                Resource: !Sub '${ArtifactBucket.Arn}/*'
+                Resource: !Sub "${ArtifactBucket.Arn}/*"
 
   FrontendPipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -745,7 +745,7 @@ Resources:
                 Category: Source
                 Owner: AWS
                 Provider: CodeStarSourceConnection
-                Version: '1'
+                Version: "1"
               Configuration:
                 BranchName: !Ref GitHubBranch
                 ConnectionArn: !Ref GitHubConnectionArn
@@ -761,7 +761,7 @@ Resources:
                 Category: Build
                 Owner: AWS
                 Provider: CodeBuild
-                Version: '1'
+                Version: "1"
               Configuration:
                 ProjectName: !Ref FrontendDeployProject
               InputArtifacts:
@@ -771,7 +771,7 @@ Resources:
 Outputs:
   FrontendUrl:
     Description: Public CloudFront URL for the frontend.
-    Value: !Sub 'https://${FrontendDistribution.DomainName}'
+    Value: !Sub "https://${FrontendDistribution.DomainName}"
   UploadApiId:
     Description: REST API ID of the upload API, used to force a stage redeployment.
     Value: !Ref UploadApi
