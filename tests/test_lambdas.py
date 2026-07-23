@@ -60,6 +60,10 @@ class FakeClient:
         self.calls.append(("send_email", k))
         return {"MessageId": "fake"}
 
+    def send_raw_email(self, *a, **k):
+        self.calls.append(("send_raw_email", k))
+        return {"MessageId": "fake"}
+
 
 class FakeTable:
     def __init__(self):
@@ -134,7 +138,14 @@ def load_handler(logical_id, env):
 
 def load_file_handler(rel_path, env):
     """Load a packaged handler that lives as a real source file under functions/."""
-    with open(os.path.join(REPO_ROOT, "functions", rel_path)) as fh:
+    src_path = os.path.join(REPO_ROOT, "functions", rel_path)
+    # The real Lambda runtime puts the handler's own directory on sys.path, so a
+    # sibling module import like `from board_image import ...` resolves. Mirror
+    # that here so exec of the handler source can import its neighbours.
+    src_dir = os.path.dirname(src_path)
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    with open(src_path) as fh:
         return _exec_source(fh.read(), rel_path, env)
 
 
@@ -254,10 +265,16 @@ def test_evaluator_engine():
     for name, (want_valid, want_winner) in EXPECTED_GAMES.items():
         res = validate_game(_move_file(name))
         check("{}: valid={}".format(name, want_valid), res["valid"] is want_valid)
+        check("{}: returns an end-position board".format(name), res.get("board") is not None)
         if want_winner is not ...:
             check("{}: winner={}".format(name, want_winner), res["winner"] == want_winner)
         if not want_valid:
             check("{}: gives a failure reason".format(name), bool(res["reason"]))
+
+    # The board renderer produces a valid PNG (magic bytes) for the start position.
+    from board_image import render_board_png
+    png = render_board_png(ns["initial_board"]())
+    check("render_board_png returns PNG bytes", png[:8] == b"\x89PNG\r\n\x1a\n")
 
 
 def _confirmed_item(sid="s1"):
@@ -275,11 +292,13 @@ def test_evaluator_handler():
     r = ns["handler"]({"submissionId": "s1"}, None)
     check("valid game -> DONE", r["status"] == "DONE")
     check("valid game -> winner black", r["winner"] == "black")
-    sent = [c for c in b._clients["ses"].calls if c[0] == "send_email"]
+    sent = [c for c in b._clients["ses"].calls if c[0] == "send_raw_email"]
     check("DONE sends exactly one result email", len(sent) == 1)
-    msg = sent[0][1]["Message"]
-    check("DONE email subject says DONE", "DONE" in msg["Subject"]["Data"])
-    check("DONE email names the winner", "Black" in msg["Body"]["Text"]["Data"])
+    raw = sent[0][1]["RawMessage"]["Data"]
+    check("DONE email subject says DONE", "Subject: Your Chess Move Validator result: DONE" in raw)
+    check("DONE email names the winner", "Black" in raw)
+    check("DONE email attaches the end-position image",
+          "image/png" in raw and "end_position.png" in raw)
 
     # Invalid game -> FAILED, email states the reason.
     ns, b = load_file_handler("evaluate_moves/index.py", EVAL_ENV)
@@ -287,12 +306,13 @@ def test_evaluator_handler():
     b._clients["s3"].body = _move_file("04_ungueltig_leeres_startfeld.txt").encode()
     r = ns["handler"]({"submissionId": "s1"}, None)
     check("invalid game -> FAILED", r["status"] == "FAILED")
-    sent = [c for c in b._clients["ses"].calls if c[0] == "send_email"]
+    sent = [c for c in b._clients["ses"].calls if c[0] == "send_raw_email"]
     check("FAILED sends exactly one email", len(sent) == 1)
-    fmsg = sent[0][1]["Message"]
-    check("FAILED email subject says FAILED", "FAILED" in fmsg["Subject"]["Data"])
-    check("FAILED email includes a reason (empty start square)",
-          "empty" in fmsg["Body"]["Text"]["Data"])
+    fraw = sent[0][1]["RawMessage"]["Data"]
+    check("FAILED email subject says FAILED", "Subject: Your Chess Move Validator result: FAILED" in fraw)
+    check("FAILED email includes a reason (empty start square)", "empty" in fraw)
+    check("FAILED email attaches the position image",
+          "image/png" in fraw and "end_position.png" in fraw)
 
     # Guard: only CONFIRMED submissions are evaluated (no double-processing).
     ns, b = load_file_handler("evaluate_moves/index.py", EVAL_ENV)
@@ -300,7 +320,7 @@ def test_evaluator_handler():
     r = ns["handler"]({"submissionId": "s1"}, None)
     check("already-DONE submission is not re-evaluated", r["status"] == "DONE")
     check("no email sent when not CONFIRMED",
-          not [c for c in b._clients["ses"].calls if c[0] == "send_email"])
+          not [c for c in b._clients["ses"].calls if c[0] == "send_raw_email"])
 
     # Missing/unknown submission is handled without raising.
     ns, b = load_file_handler("evaluate_moves/index.py", EVAL_ENV)

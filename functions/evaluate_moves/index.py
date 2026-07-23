@@ -8,7 +8,12 @@ result (the winner on DONE, the specific reason on FAILED).
 import boto3
 import os
 import time
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from botocore.exceptions import ClientError
+
+from board_image import render_board_png
 
 table = boto3.resource('dynamodb').Table(os.environ['SUBMISSIONS_TABLE'])
 s3 = boto3.client('s3')
@@ -165,22 +170,22 @@ def validate_game(text):
             continue
         move_no += 1
         if ended is not None:
-            return {'valid': False, 'winner': None, 'moves': played,
+            return {'valid': False, 'winner': None, 'moves': played, 'board': board,
                     'reason': 'move {} ({}) was played after the game already ended in {}'.format(move_no, line, ended)}
         parts = line.split()
         if len(parts) != 2:
-            return {'valid': False, 'winner': None, 'moves': played,
+            return {'valid': False, 'winner': None, 'moves': played, 'board': board,
                     'reason': 'move {} ("{}") is not in "<from> <to>" format'.format(move_no, line)}
         src_txt, dst_txt = parts[0].lower(), parts[1].lower()
         src, dst = parse_square(src_txt), parse_square(dst_txt)
         if src is None or dst is None:
-            return {'valid': False, 'winner': None, 'moves': played,
+            return {'valid': False, 'winner': None, 'moves': played, 'board': board,
                     'reason': 'move {} ("{}") uses a square outside a1-h8'.format(move_no, line)}
         c0, r0 = src
         c1, r1 = dst
         err = move_error(board, c0, r0, c1, r1, color, src_txt, dst_txt)
         if err is not None:
-            return {'valid': False, 'winner': None, 'moves': played,
+            return {'valid': False, 'winner': None, 'moves': played, 'board': board,
                     'reason': 'move {} ({} {}) is illegal: {}'.format(move_no, src_txt, dst_txt, err)}
         board = make_move(board, c0, r0, c1, r1)
         played += 1
@@ -192,14 +197,24 @@ def validate_game(text):
             else:
                 ended = 'stalemate'
         color = opponent
-    return {'valid': True, 'winner': winner, 'moves': played, 'reason': None, 'ended': ended}
+    return {'valid': True, 'winner': winner, 'moves': played, 'reason': None,
+            'ended': ended, 'board': board}
 
 
 # --- handler -----------------------------------------------------
-def _send(to, subject, body):
-    ses.send_email(
-        Source=os.environ['EMAIL_FROM'], Destination={'ToAddresses': [to]},
-        Message={'Subject': {'Data': subject}, 'Body': {'Text': {'Data': body}}})
+def _send(to, subject, body, image=None):
+    msg = MIMEMultipart('mixed')
+    msg['Subject'] = subject
+    msg['From'] = os.environ['EMAIL_FROM']
+    msg['To'] = to
+    msg.attach(MIMEText(body, 'plain', 'us-ascii'))
+    if image is not None:
+        part = MIMEImage(image, _subtype='png')
+        part.add_header('Content-Disposition', 'attachment', filename='end_position.png')
+        msg.attach(part)
+    ses.send_raw_email(
+        Source=os.environ['EMAIL_FROM'], Destinations=[to],
+        RawMessage={'Data': msg.as_string()})
 
 
 def handler(event, context):
@@ -244,6 +259,11 @@ def handler(event, context):
             return {'status': 'ALREADY_PROCESSED'}
         raise
 
+    try:
+        image = render_board_png(result['board'])
+    except Exception:
+        image = None  # never drop the result email over a rendering error
+
     to = item['email']
     if new_status == 'DONE':
         if winner_label:
@@ -252,10 +272,12 @@ def handler(event, context):
             outcome = 'There is no winner: no checkmate was reached (the game is unfinished or drawn).'
         body = ('Good news - your chess game file is valid.\n\n'
                 'Moves validated: {}\n'
-                'Result: {}\n'.format(result['moves'], outcome))
-        _send(to, 'Your Chess Move Validator result: DONE', body)
+                'Result: {}\n\n'
+                'The attached image shows the final position.\n'.format(result['moves'], outcome))
+        _send(to, 'Your Chess Move Validator result: DONE', body, image)
     else:
         body = ('Your chess game file is invalid, so no winner can be declared.\n\n'
-                'Reason: {}\n'.format(result['reason']))
-        _send(to, 'Your Chess Move Validator result: FAILED', body)
+                'Reason: {}\n\n'
+                'The attached image shows the position reached before the problem move.\n'.format(result['reason']))
+        _send(to, 'Your Chess Move Validator result: FAILED', body, image)
     return {'status': new_status, 'winner': winner_label}
